@@ -69,15 +69,18 @@ struct ImageAnnotation {
 #[command(version, long_about = None)]
 struct Args {
     /// Directory containing LabelMe JSON files
-    #[arg(short = 'd', long = "json_dir")]
-    json_dir: String,
+    #[arg(short = 'd', long = "data_dir")]
+    data_dir: String,
+
+    #[arg(short = 's', long = "save_dir")]
+    save_dir: String,
 
     /// Proportion of the dataset to use for validation
-    #[arg(long = "val_size", default_value_t = 0.2, value_parser = validate_size)]
+    #[arg(long = "val_ratio", default_value_t = 0.2, value_parser = validate_size)]
     val_size: f32,
 
     /// Proportion of the dataset to use for testing
-    #[arg(long = "test_size", default_value_t = 0.0, value_parser = validate_size)]
+    #[arg(long = "test_ratio", default_value_t = 0.0, value_parser = validate_size)]
     test_size: f32,
 
     /// Output format for YOLO annotations: 'bbox' or 'polygon'
@@ -122,15 +125,16 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
-    let dirname = PathBuf::from(&args.json_dir);
+    let dirname = PathBuf::from(&args.data_dir);
     if !dirname.exists() {
-        error!("The specified json_dir does not exist: {}", args.json_dir);
+        error!("The specified json_dir does not exist: {}", args.data_dir);
         return;
     }
 
+    let save_path = PathBuf::from(&args.save_dir);
     info!("Starting the conversion process...");
 
-    match setup_output_directories(&args, &dirname) {
+    match setup_output_directories(&args, &dirname, &save_path) {
         Ok(output_dirs) => {
             let mut annotations = read_and_parse_json_files(&dirname, &args);
             info!("Read and parsed {} files.", annotations.len());
@@ -147,7 +151,7 @@ fn main() {
             process_all_annotations(&split_data, &output_dirs, &label_map, &args, &dirname);
 
             info!("Creating dataset.yaml file...");
-            if let Err(e) = create_dataset_yaml(&dirname, &args, &label_map) {
+            if let Err(e) = create_dataset_yaml(&save_path, &args, &label_map) {
                 error!("Failed to create dataset.yaml: {}", e);
             } else {
                 info!("Conversion process completed successfully.");
@@ -182,9 +186,9 @@ fn create_output_directory(path: &Path) -> std::io::Result<PathBuf> {
 }
 
 // Set up the directory structure for YOLO dataset output
-fn setup_output_directories(args: &Args, dirname: &Path) -> std::io::Result<OutputDirs> {
-    let labels_dir = create_output_directory(&dirname.join("YOLODataset/labels"))?;
-    let images_dir = create_output_directory(&dirname.join("YOLODataset/images"))?;
+fn setup_output_directories(args: &Args, dirname: &Path, save_path: &Path) -> std::io::Result<OutputDirs> {
+    let labels_dir = create_output_directory(&save_path.join("labels"))?;
+    let images_dir = create_output_directory(&save_path.join("images"))?;
 
     let train_labels_dir = create_output_directory(&labels_dir.join("train"))?;
     let val_labels_dir = create_output_directory(&labels_dir.join("val"))?;
@@ -395,7 +399,7 @@ fn create_progress_bar(len: u64, label: &str) -> ProgressBar {
     pb.set_style(
         ProgressStyle::default_bar()
             .template(&format!(
-                "{{spinner:.green}} [{}] [{{elapsed_precise}}] [{{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{eta}})",
+                "{{spinner:.green}} [{:>5}] [{{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{elapsed}})",
                 label
             ))
             .progress_chars("#>-"),
@@ -597,9 +601,9 @@ fn create_dataset_yaml(
     args: &Args,
     label_map: &Arc<Mutex<HashMap<String, usize>>>,
 ) -> std::io::Result<()> {
-    let dataset_yaml_path = dirname.join("YOLODataset/dataset.yaml");
+    let dataset_yaml_path = dirname.join("dataset.yaml");
     let mut dataset_yaml = BufWriter::new(File::create(&dataset_yaml_path)?);
-    let absolute_path = fs::canonicalize(&dirname.join("YOLODataset"))?;
+    let absolute_path = fs::canonicalize(&dirname)?;
     let mut yaml_content = format!(
         "path: {}\ntrain: images/train\nval: images/val\n",
         absolute_path.to_string_lossy()
